@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Modelo de la telaraña</title>
+<style>
+:root{--ink:#1b1d21;--mute:#5f6670;--line:#d9dce1;--panel:#f2f3f5;--red:#b22222;--bg:#fff}
+@media (prefers-color-scheme:dark){:root{--ink:#e8e9ec;--mute:#9aa1ac;--line:#3a3e45;--panel:#23262b;--red:#e5645f;--bg:#16181c}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{display:grid;grid-template-columns:300px 1fr;gap:28px;max-width:1180px;margin:0 auto;padding:24px}
+@media(max-width:820px){main{grid-template-columns:1fr}}
+aside{background:var(--panel);border-radius:10px;padding:20px;align-self:start}
+h1{font:600 20px/1.2 Georgia,serif;margin:0 0 6px}
+.eq{color:var(--mute);font:italic 14px Georgia,serif;margin:0 0 18px}
+.row{margin-bottom:14px}
+.row label{display:flex;justify-content:space-between;font:italic 15px Georgia,serif}
+.row output{font:13px ui-monospace,Menlo,monospace;color:var(--mute)}
+input[type=range]{width:100%;accent-color:var(--red);margin:4px 0 0}
+.auto{display:flex;gap:8px;align-items:flex-start;font-size:13px;color:var(--mute);margin:-4px 0 14px}
+.auto input{margin-top:3px;accent-color:var(--red)}
+.calc{border-top:1px solid var(--line);padding-top:12px;margin-top:6px;font:13px ui-monospace,Menlo,monospace;color:var(--mute)}
+.calc div{display:flex;justify-content:space-between}
+#msg{margin:12px 0 0;font-size:13px;color:var(--red);min-height:1.4em}
+nav{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
+nav button{font:inherit;padding:7px 14px;border:1px solid var(--line);background:none;color:var(--ink);border-radius:6px;cursor:pointer}
+nav button[aria-selected=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+nav button:focus-visible,input:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+h2{font:600 18px Georgia,serif;margin:6px 0 2px}
+.cond{color:var(--mute);margin:0 0 6px;font-size:14px}
+svg{width:100%;height:auto;display:block}
+svg text{fill:var(--ink);font:14px Georgia,serif;font-style:italic}
+.leg{display:flex;flex-wrap:wrap;gap:6px 22px;font:italic 14px Georgia,serif;color:var(--mute);margin-top:4px}
+.leg i{display:inline-block;width:26px;border-top:2px solid;vertical-align:middle;margin-right:7px}
+[hidden]{display:none}
+#v0,#v1,#v2{cursor:grab;user-select:none}
+</style>
+</head>
+<body>
+<main>
+<aside>
+  <h1>Modelo de la telaraña</h1>
+  <p class="eq">Q<sup>d</sup><sub>t</sub> = α − β p<sub>t</sub> &nbsp;·&nbsp; Q<sup>s</sup><sub>t</sub> = −γ + δ p<sub>t−1</sub></p>
+  <div id="sliders"></div>
+  <label class="auto"><input type="checkbox" id="auto" checked> p₀ automático: lejos de p* si converge, cerca si diverge</label>
+  <label class="auto"><input type="checkbox" id="neg" checked> permitir precios negativos</label>
+  <div class="calc" id="calc"></div>
+  <p id="msg" role="status"></p>
+</aside>
+<section>
+  <nav role="tablist" id="tabs"></nav>
+  <h2 id="ttl"></h2>
+  <p class="cond" id="cond"></p>
+  <p class="cond" style="font-size:13px;margin-top:-4px">Rueda del mouse: zoom · arrastrar: mover · doble clic: restablecer la vista</p>
+  <div id="v0"></div><div id="v1" hidden></div><div id="v2" hidden></div>
+  <div class="leg" id="leg"></div>
+</section>
+</main>
+<script>
+const P={alpha:6,beta:1,gamma:1,delta:.75,p0:7,steps:20};
+// Ventanas fijas: los ejes no se mueven, solo las rectas
+const VIEW=[{xmin:-1,xmax:10,ymin:-3,ymax:12},{xmin:-1,xmax:10,ymin:-1,ymax:10},{xmin:-.4,xmax:30.8,ymin:-3,ymax:11}];
+let CID=0;
+const DEFS=[['alpha','α',1,11,.1],['beta','β',.1,3,.05],['gamma','γ',0,3,.1],['delta','δ',.1,3,.05],['p0','p₀',0,10,.05],['steps','Períodos',1,30,1]];
+const TABS=['Telaraña','Diagrama de fases','Trayectoria temporal'];
+const $=s=>document.querySelector(s);
+const sub=(b,x)=>`${b}<tspan dy="4" font-size="72%">${x}</tspan>`;
+const H=(b,x)=>`${b}<sub>${x}</sub>`;
+let tab=0;
+
+// ---------- modelo ----------
+let AUTO=true, NEG=true; const PMAX=10;
+// p0 automático: lejos de p* si converge (δ ≤ β); muy cerca de p* si diverge (δ > β),
+// con un desvío tal que la espiral llega al borde de la ventana justo al final de los períodos.
+function syncP0(){
+  const {alpha:a,beta:b,gamma:g,delta:d,steps}=P, ps=(a+g)/(b+d);
+  let p0;
+  if(d<=b){ p0=ps<PMAX/2 ? ps+.75*(PMAX-ps) : .25*ps; }
+  else{ const room=Math.max(Math.min(ps,PMAX-ps),.5); p0=ps+Math.max(.9*room/Math.pow(d/b,steps),1e-3); }
+  P.p0=Math.min(Math.max(p0,0),PMAX);
+  const el=$('#p0'); if(el){el.value=P.p0; $('#o_p0').textContent=P.p0.toFixed(2);}
+}
+function compute(){
+  if(AUTO)syncP0();
+  const {alpha:a,beta:b,gamma:g,delta:d,p0,steps}=P;
+  const c=(a+g)/b, m=-d/b, ps=(a+g)/(b+d);
+  const p=[p0]; let neg=null;
+  for(let k=0;k<steps;k++){const n=c+m*p[k]; if(!NEG&&n<0){neg=k+1;break;} p.push(n);}
+  const q=p.slice(0,-1).map(x=>-g+d*x);
+  return {a,b,g,d,c,m,ps,qs:a-b*ps,p,q,neg};
+}
+
+// ---------- utilidades de dibujo ----------
+function base(id,o){
+  const W=760,Hh=470,R=100,T=34,B=48,L=o.L||90;
+  const sx=x=>L+(x-o.xmin)/(o.xmax-o.xmin)*(W-L-R);
+  const sy=y=>Hh-B-(y-o.ymin)/(o.ymax-o.ymin)*(Hh-T-B);
+  return {W,H:Hh,L,R,T,B,sx,sy,id,x0:Math.min(Math.max(sx(0),L),W-R),y0:Math.min(Math.max(sy(0),T),Hh-B),...o};
+}
+const ln=(c,x1,y1,x2,y2,col,w,dash,extra='')=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="${w}" ${dash?`stroke-dasharray="${dash}"`:''} ${extra}/>`;
+const dot=(x,y,col,r=4.5)=>`<g clip-path="url(#c${CID})"><circle cx="${x}" cy="${y}" r="${r}" fill="${col}"/></g>`;
+function open(c,xl,yl){
+  const {W,H:Hh,L,R,T,B,id,x0,y0}=c; CID=id;
+  return `<svg viewBox="0 0 ${W} ${Hh}" role="img"><defs>
+  <marker id="t${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1.5L9 5L1 8.5" fill="none" stroke="currentColor" stroke-width="1.6"/></marker>
+  <marker id="a${id}" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
+  <clipPath id="c${id}"><rect x="${L}" y="${T}" width="${W-L-R}" height="${Hh-T-B}"/></clipPath></defs>
+  <g style="color:var(--ink)">
+  ${ln(0,x0,Hh-B,x0,T-14,'currentColor',1.4,0,`marker-end="url(#a${id})"`)}
+  ${ln(0,L,y0,W-R+16,y0,'currentColor',1.4,0,`marker-end="url(#a${id})"`)}</g>
+  <text x="${x0-10}" y="${T-8}" text-anchor="end" font-size="16">${yl}</text>
+  <text x="${W-R+24}" y="${y0+5}" font-size="16">${xl}</text>
+  ${(c.xmin<=0&&c.xmax>=0&&c.ymin<=0&&c.ymax>=0)?`<text x="${x0-9}" y="${y0+17}" text-anchor="end" style="font-style:normal">0</text>`:''}`;
+}
+function ticks(c,axis,items){
+  const placed=[]; let o='';
+  for(const it of items){
+    const x=axis==='x', pos=x?c.sx(it.v):c.sy(it.v);
+    if(x?(pos<c.L-1||pos>c.W-c.R+1):(pos<c.T-1||pos>c.H-c.B+1))continue;
+    if(placed.some(q=>Math.abs(q-pos)<(x?26:16)))continue;
+    placed.push(pos);
+    o+= x? ln(0,pos,c.y0-4,pos,c.y0+4,'var(--ink)',1)+`<text x="${pos}" y="${c.y0+21}" text-anchor="middle">${it.h}</text>`
+         : ln(0,c.x0-4,pos,c.x0+4,pos,'var(--ink)',1)+`<text x="${c.x0-10}" y="${pos+5}" text-anchor="end">${it.h}</text>`;
+  }
+  return o;
+}
+function path(c,pts){
+  let o='';
+  for(let i=0;i<pts.length-1;i++){
+    const [x0,y0]=[c.sx(pts[i][0]),c.sy(pts[i][1])],[x1,y1]=[c.sx(pts[i+1][0]),c.sy(pts[i+1][1])];
+    if(Math.hypot(x1-x0,y1-y0)<3)continue;
+    o+=ln(0,x0,y0,x1,y1,'var(--ink)',1.2,'5 4',`marker-end="url(#t${c.id})" style="color:var(--ink)"`);
+  }
+  return `<g clip-path="url(#c${c.id})">${o}</g>`;
+}
+const guide=(c,x1,y1,x2,y2)=>`<g clip-path="url(#c${c.id})">`+ln(0,c.sx(x1),c.sy(y1),c.sx(x2),c.sy(y2),'var(--mute)',1,'2 3','opacity=".6"')+'</g>';
+const clipped=s=>`<g clip-path="url(#c${s.id})">`;
+
+// ---------- gráficos ----------
+function tela(d){
+  const {a,b,g,d:dl,p,q,ps,qs}=d, n=p.length-1;
+  const {xmin,xmax}=VIEW[0];
+  const c=base(0,VIEW[0]);
+  let o=open(c,sub('p','t'),sub('Q','t'));
+  o+=clipped(c)+ln(0,c.sx(xmin),c.sy(a-b*xmin),c.sx(xmax),c.sy(a-b*xmax),'var(--red)',2)
+    +ln(0,c.sx(xmin),c.sy(-g+dl*xmin),c.sx(xmax),c.sy(-g+dl*xmax),'var(--ink)',2)+'</g>';
+  o+=guide(c,ps,0,ps,qs)+guide(c,0,qs,ps,qs);
+  q.forEach((qv,k)=>{o+=guide(c,0,qv,p[k],qv);o+=guide(c,p[k+1],0,p[k+1],qv);});
+  const pts=[[p[0],0]]; q.forEach((qv,k)=>{pts.push([p[k],qv],[p[k+1],qv]);});
+  o+=path(c,pts);
+  o+=dot(c.sx(0),c.sy(a),'var(--red)')+dot(c.sx(0),c.sy(-g),'var(--ink)')+dot(c.sx(ps),c.sy(qs),'var(--ink)');
+  o+=ticks(c,'x',[{v:ps,h:'p<tspan dy="-5" font-size="72%">*</tspan>'},...p.map((v,k)=>({v,h:sub('p',k)}))]);
+  o+=ticks(c,'y',[{v:a,h:'α'},...(g>0?[{v:-g,h:'−γ'}]:[]),{v:qs,h:'Q<tspan dy="-5" font-size="72%">*</tspan>'},...q.map((v,k)=>({v,h:sub('Q',k+1)}))]);
+  return o+'</svg>';
+}
+function fases(d){
+  const {c:ci,m,p,ps}=d;
+  const {xmin,xmax}=VIEW[1];
+  const c=base(1,{...VIEW[1],L:104});
+  let o=open(c,sub('p','t'),`p<tspan dy="4" font-size="72%">t+1</tspan>`);
+  o+=clipped(c)+ln(0,c.sx(xmin),c.sy(ci+m*xmin),c.sx(xmax),c.sy(ci+m*xmax),'var(--red)',2)
+    +ln(0,c.sx(xmin),c.sy(xmin),c.sx(xmax),c.sy(xmax),'var(--ink)',2)+'</g>';
+  o+=guide(c,ps,0,ps,ps)+guide(c,0,ps,ps,ps);
+  p.slice(1).forEach(v=>{o+=guide(c,v,0,v,v)+guide(c,0,v,v,v);});
+  const pts=[[p[0],0]]; for(let k=0;k<p.length-1;k++)pts.push([p[k],p[k+1]],[p[k+1],p[k+1]]);
+  o+=path(c,pts);
+  o+=dot(c.sx(0),c.sy(ci),'var(--red)')+dot(c.sx(ps),c.sy(ps),'var(--ink)');
+  const st='p<tspan dy="-5" font-size="72%">*</tspan>';
+  o+=ticks(c,'x',[{v:ps,h:st},...p.map((v,k)=>({v,h:sub('p',k)}))]);
+  o+=ticks(c,'y',[{v:ci,h:'(α+γ)/β'},{v:ps,h:st},...p.map((v,k)=>({v,h:sub('p',k)}))]);
+  return o+'</svg>';
+}
+function tiempo(d){
+  const {p,ps}=d, n=Math.max(p.length-1,1);
+  const c=base(2,{...VIEW[2],L:150});
+  let o=open(c,'Tiempo (t)',sub('p','t'));
+  o+='<g clip-path="url(#c2)">'+ln(0,c.sx(c.xmin),c.sy(ps),c.sx(c.xmax),c.sy(ps),'var(--ink)',1.5,'10 3 2 3');
+  o+=ln(0,c.sx(0),c.sy(p[0]),c.sx(c.xmax),c.sy(p[0]),'var(--mute)',1,'2 3','opacity=".7"');
+  for(let k=0;k<p.length-1;k++){
+    o+=ln(0,c.sx(k),c.sy(p[k]),c.sx(k+1),c.sy(p[k]),'var(--red)',2.2);
+    o+=ln(0,c.sx(k+1),c.sy(p[k]),c.sx(k+1),c.sy(p[k+1]),'var(--red)',1.5,'5 4');
+  }
+  o+='</g>';
+  p.forEach((v,k)=>{o+=dot(c.sx(k),c.sy(v),'var(--red)',5);});
+  o+=ticks(c,'x',p.map((_,k)=>({v:k,h:String(k)})));
+  o+=ticks(c,'y',[{v:ps,h:'p̄ = (α+γ)/(β+δ)'},{v:p[0],h:sub('p',0)}]);
+  return o+'</svg>';
+}
+
+// ---------- interfaz ----------
+const LEGS=[
+ [['var(--red)','','Q<sup>d</sup><sub>t</sub> = α − β p<sub>t</sub>'],['var(--ink)','','Q<sup>s</sup><sub>t</sub> = −γ + δ p<sub>t−1</sub>'],['var(--ink)','dotted','p* = (α+γ)/(β+δ)']],
+ [['var(--red)','','p<sub>t+1</sub> = (α+γ)/β − (δ/β) p<sub>t</sub>'],['var(--ink)','','p<sub>t+1</sub> = p<sub>t</sub>'],['var(--ink)','dotted','p* = (α+γ)/(β+δ)']],
+ [['var(--red)','','trayectoria p<sub>t</sub>'],['var(--ink)','dashed','p̄ = (α+γ)/(β+δ)']]];
+function render(){
+  const d=compute();
+  $('#v0').innerHTML=tela(d); $('#v1').innerHTML=fases(d); $('#v2').innerHTML=tiempo(d);
+  const {b,d:dl}=d, eps=1e-9;
+  const kind=dl<b-eps?['Convergente oscilante','β > δ']:dl>b+eps?['Divergente oscilante','β < δ']:['Oscilación periódica (ciclo)','β = δ'];
+  $('#ttl').textContent=kind[0]; $('#cond').innerHTML=`Condición: ${kind[1].replace('β','β').replace('δ','δ')}  ·  pendiente de la recta de fases: −δ/β`;
+  $('#calc').innerHTML=`<div><span>p* = (α+γ)/(β+δ)</span><span>${d.ps.toFixed(2)}</span></div><div><span>(α+γ)/β</span><span>${d.c.toFixed(2)}</span></div><div><span>−δ/β</span><span>${d.m.toFixed(2)}</span></div>`;
+  $('#msg').textContent=d.neg?`Con precios negativos desactivados, la trayectoria se corta antes de t = ${d.neg}: el precio sería negativo. Activá "permitir precios negativos" para verla completa.`:'';
+  $('#leg').innerHTML=LEGS[tab].map(([col,st,t])=>`<span><i style="border-color:${col};border-top-style:${st||'solid'}"></i>${t}</span>`).join('');
+  [0,1,2].forEach(i=>{$('#v'+i).hidden=i!==tab;});
+  [...document.querySelectorAll('#tabs button')].forEach((b,i)=>b.setAttribute('aria-selected',i===tab));
+}
+$('#sliders').innerHTML=DEFS.map(([k,l,mn,mx,st])=>`<div class="row"><label for="${k}"><span>${l}</span><output id="o_${k}"></output></label><input type="range" id="${k}" min="${mn}" max="${mx}" step="${st}" value="${P[k]}"></div>`).join('');
+DEFS.forEach(([k,,,,st])=>{
+  const el=$('#'+k), out=$('#o_'+k), show=()=>out.textContent=k==='steps'?P[k]:(+P[k]).toFixed(2);
+  el.addEventListener('input',()=>{P[k]=+el.value;show();render();}); show();
+});
+$('#p0').disabled=true;
+$('#auto').addEventListener('change',e=>{AUTO=e.target.checked;$('#p0').disabled=AUTO;render();});
+$('#neg').addEventListener('change',e=>{NEG=e.target.checked;render();});
+$('#tabs').innerHTML=TABS.map((t,i)=>`<button role="tab" aria-selected="${i===0}" data-i="${i}">${t}</button>`).join('');
+$('#tabs').addEventListener('click',e=>{const b=e.target.closest('button');if(b){tab=+b.dataset.i;render();}});
+
+// ---------- zoom (rueda), mover (arrastrar) y restablecer (doble clic) ----------
+const V0=JSON.parse(JSON.stringify(VIEW)), LS=[90,104,150], GW=760, GH=470, GR=100, GT=34, GB=48;
+function plotPos(i,e,el){
+  const r=el.querySelector('svg').getBoundingClientRect(), L=LS[i];
+  const x=(e.clientX-r.left)*GW/r.width, y=(e.clientY-r.top)*GH/r.height;
+  if(x<L||x>GW-GR||y<GT||y>GH-GB)return null;
+  return {fx:(x-L)/(GW-L-GR),fy:1-(y-GT)/(GH-GT-GB)};
+}
+[0,1,2].forEach(i=>{
+  const el=$('#v'+i); let drag=null;
+  el.addEventListener('wheel',e=>{
+    const q=plotPos(i,e,el); if(!q)return; e.preventDefault();
+    const v=VIEW[i], k=e.deltaY<0?.85:1/.85, w=v.xmax-v.xmin, h=v.ymax-v.ymin;
+    const w0=V0[i].xmax-V0[i].xmin, h0=V0[i].ymax-V0[i].ymin;
+    const nw=Math.min(Math.max(w*k,w0/50),w0*8), nh=Math.min(Math.max(h*k,h0/50),h0*8);
+    const cx=v.xmin+q.fx*w, cy=v.ymin+q.fy*h;
+    v.xmin=cx-q.fx*nw; v.xmax=v.xmin+nw; v.ymin=cy-q.fy*nh; v.ymax=v.ymin+nh; render();
+  },{passive:false});
+  el.addEventListener('pointerdown',e=>{
+    if(e.button!==0||!plotPos(i,e,el))return;
+    drag={x:e.clientX,y:e.clientY,v:{...VIEW[i]}}; el.setPointerCapture(e.pointerId); el.style.cursor='grabbing';
+  });
+  el.addEventListener('pointermove',e=>{
+    if(!drag)return;
+    const r=el.querySelector('svg').getBoundingClientRect(), v=drag.v;
+    const dx=(e.clientX-drag.x)/((GW-LS[i]-GR)*r.width/GW)*(v.xmax-v.xmin);
+    const dy=(e.clientY-drag.y)/((GH-GT-GB)*r.height/GH)*(v.ymax-v.ymin);
+    Object.assign(VIEW[i],{xmin:v.xmin-dx,xmax:v.xmax-dx,ymin:v.ymin+dy,ymax:v.ymax+dy}); render();
+  });
+  const end=()=>{drag=null;el.style.cursor='';};
+  el.addEventListener('pointerup',end); el.addEventListener('pointercancel',end);
+  el.addEventListener('dblclick',()=>{Object.assign(VIEW[i],V0[i]);render();});
+});
+render();
+</script>
+</body>
+</html>
