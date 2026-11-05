@@ -39,4 +39,4 @@ En las fórmulas se usa `*` para multiplicar y `^` para potencias. Funciones dis
 
 **En local:** descargá el repositorio y abrí `index.html` (o cualquiera de los dos archivos) en el navegador.
 
-**En línea con GitHub Pages:** 
+**En línea con GitHub Pages:** https://tomashannon.github.io/Modelos-economia/
