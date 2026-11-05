@@ -39,4 +39,4 @@ En las fórmulas se usa `*` para multiplicar y `^` para potencias. Funciones dis
 
 **En local:** descargá el repositorio y abrí `index.html` (o cualquiera de los dos archivos) en el navegador.
 
-**En línea con GitHub Pages:** en el repositorio, entrá en *Settings → Pages*, elegí *Deploy from a branch*, la rama `main` y la carpeta `/ (root)`. En un par de minutos queda publicado en `https://<usuario>.github.io/<repositorio>/`.
+**En línea con GitHub Pages:** 
