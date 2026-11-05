@@ -1,6 +1,7 @@
 # Modelos dinámicos interactivos
 
 Dos herramientas para visualizar modelos dinámicos de economía, hechas en un solo archivo HTML cada una. No necesitan instalar nada ni conexión a internet: se abren con doble clic en cualquier navegador.
+Hechas con el objetivo de la ayuda pedagógica en la materia Matemática Aplicada II de la carrera de Economía de la Universidad de Buenos Aires (UBA)
 
 ## Contenido
 
