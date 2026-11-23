@@ -36,6 +36,7 @@ svg text{fill:var(--ink);font:italic 15px Georgia,serif}
 .leg{display:flex;flex-wrap:wrap;gap:6px 22px;font:italic 14px Georgia,serif;color:var(--mute);margin-top:4px}
 .leg i{display:inline-block;width:26px;border-top:3px solid;vertical-align:middle;margin-right:7px}
 input:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+footer{grid-column:1/-1}
 </style>
 </head>
 <body>
@@ -99,16 +100,85 @@ const P={a:0,b:0,c:0,d:0}, S={u:null,v:null,err:''};
 let curRng=null;
 const V0={xmin:-.5,xmax:8.5,ymin:-.5,ymax:6.5};
 let V={...V0},E=[],kx,ky;
-const PT=[{n:'A',x:1.6,y:4.6},{n:'B',x:.9,y:1.4},{n:'C',x:5.4,y:5.6}];
+const PT0=[{n:'A',x:1.6,y:4.6},{n:'B',x:.9,y:1.4},{n:'C',x:5.4,y:5.6}];
+let PT=PT0.map(p=>({...p})), EMore=0;
 const sx=x=>L+(x-V.xmin)*kx, sy=y=>H-B-(y-V.ymin)*ky, ix=X=>V.xmin+(X-L)/kx, iy=Y=>V.ymin+(H-B-Y)/ky;
 const f1=n=>n.toFixed(1), UV=(x,y)=>[S.u(x,y),S.v(x,y)];
 
 // ---------- expresiones ----------
 function prep(s){
-  let t=s.replace(/ln\(/g,'log(');
-  const re=/([A-Za-z0-9_.]+|\([^()]*\))\s*\^\s*(-?[A-Za-z0-9_.]+|\([^()]*\))/;
-  for(let i=0;i<20&&re.test(t);i++)t=t.replace(re,'pow($1,$2)');
-  return t.replace(/\^/g,'**');
+  const tk=[]; let i=0;
+  while(i<s.length){
+    const c=s[i];
+    if(/\s/.test(c)){i++;continue;}
+    if(s.slice(i,i+2)==='**'){tk.push({t:'^'});i+=2;continue;}
+    if('+-*/^(),'.includes(c)){tk.push({t:c});i++;continue;}
+    if(/[0-9.]/.test(c)){
+      const m=s.slice(i).match(/^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/);
+      if(!m)throw new Error('Número inválido cerca de "'+s.slice(i,i+8)+'".');
+      tk.push({t:'num',v:m[0]});i+=m[0].length;continue;
+    }
+    if(/[A-Za-z_]/.test(c)){
+      const m=s.slice(i).match(/^[A-Za-z_][A-Za-z0-9_]*/)[0];
+      tk.push({t:'id',v:m});i+=m.length;continue;
+    }
+    throw new Error('Carácter no permitido: "'+c+'".');
+  }
+  if(!tk.length)throw new Error('La ecuación está vacía.');
+  const VARS=new Set(['x','y','a','b','c','d','pi']), FNS=new Set(['sin','cos','tan','exp','ln','log','sqrt','abs','pow']);
+  let p=0; const pk=()=>tk[p], nxt=()=>tk[p++];
+  function add(){
+    let v=mul();
+    while(pk()&&(pk().t==='+'||pk().t==='-'))v=`(${v}${nxt().t}${mul()})`;
+    return v;
+  }
+  function mul(){
+    let v=unary();
+    while(pk()&&(pk().t==='*'||pk().t==='/'))v=`(${v}${nxt().t}${unary()})`;
+    return v;
+  }
+  function unary(){
+    if(pk()&&(pk().t==='+'||pk().t==='-'))return `(${nxt().t}${unary()})`;
+    return pow();
+  }
+  function pow(){
+    const base=atom();
+    if(pk()&&pk().t==='^'){nxt();return `pow(${base},${unary()})`;}
+    return base;
+  }
+  function atom(){
+    const q=pk();
+    if(!q)throw new Error('Expresión incompleta.');
+    if(q.t==='num'){nxt();return q.v;}
+    if(q.t==='('){nxt();const v=add();if(!pk()||pk().t!==')')throw new Error('Falta cerrar un paréntesis.');nxt();return `(${v})`;}
+    if(q.t==='id'){
+      nxt();
+      if(pk()&&pk().t==='('){
+        if(!FNS.has(q.v))throw new Error('Función desconocida: '+q.v);
+        nxt();
+        const args=[add()];
+        while(pk()&&pk().t===','){
+          if(q.v!=='pow')throw new Error('Usá punto (.) para decimales, no coma (,).');
+          nxt();args.push(add());
+        }
+        if(!pk()||pk().t!==')')throw new Error('Falta cerrar el paréntesis de '+q.v+'().');
+        nxt();
+        const need=q.v==='pow'?2:1;
+        if(args.length!==need)throw new Error(q.v+'() requiere '+need+' argumento'+(need>1?'s':'')+'.');
+        return `${q.v==='ln'?'log':q.v}(${args.join(',')})`;
+      }
+      if(!VARS.has(q.v))throw new Error('Símbolo desconocido: '+q.v);
+      return q.v;
+    }
+    if(q.t===',')throw new Error('Usá punto (.) para decimales, no coma (,).');
+    throw new Error('Token inesperado cerca de "'+q.t+'".');
+  }
+  const out=add();
+  if(pk()){
+    if(pk().t===',')throw new Error('Usá punto (.) para decimales, no coma (,).');
+    throw new Error('Revisá los operadores o paréntesis.');
+  }
+  return out;
 }
 function mk(src){
   const fn=new Function('x','y','a','b','c','d','sin','cos','tan','exp','log','sqrt','abs','pow','pi','return ('+prep(src)+');');
@@ -116,7 +186,7 @@ function mk(src){
 }
 function compile(){
   try{S.u=mk($('#fu').value);S.v=mk($('#fv').value);S.u(1,1);S.v(1,1);S.err='';}
-  catch(e){S.err='No pude interpretar la ecuación: revisá los * y los paréntesis ('+e.message+').';}
+  catch(e){S.err='No pude interpretar la ecuación: '+e.message;}
 }
 
 // ---------- cálculo ----------
@@ -137,29 +207,35 @@ function contour(f){
   }
   return segs;
 }
+function jac(x,y,e){
+  const [u,v]=UV(x,y),[uxp,vxp]=UV(x+e,y),[uxm,vxm]=UV(x-e,y),[uyp,vyp]=UV(x,y+e),[uym,vym]=UV(x,y-e);
+  const d=(p,c,m)=>isFinite(p+m)?(p-m)/(2*e):isFinite(p+c)?(p-c)/e:isFinite(c+m)?(c-m)/e:NaN;
+  return [d(uxp,u,uxm),d(uyp,u,uym),d(vxp,v,vxm),d(vyp,v,vym)];
+}
 function equilibria(){
   const w=V.xmax-V.xmin,h=V.ymax-V.ymin,sc=Math.max(w,h),res=[];
   for(let i=0;i<=14;i++)for(let j=0;j<=10;j++){
     let x=V.xmin+w*i/14,y=V.ymin+h*j/10,ok=false;
     for(let it=0;it<40;it++){
       const [u,v]=UV(x,y); if(!isFinite(u+v))break;
-      const e=1e-6*sc,[u1,v1]=UV(x+e,y),[u2,v2]=UV(x,y+e);
-      const ux=(u1-u)/e,vx=(v1-v)/e,uy=(u2-u)/e,vy=(v2-v)/e,det=ux*vy-uy*vx;
+      const [ux,uy,vx,vy]=jac(x,y,1e-6*sc),det=ux*vy-uy*vx;
       if(!isFinite(det)||Math.abs(det)<1e-12)break;
       const dx=(u*vy-uy*v)/det,dy=(ux*v-u*vx)/det; x-=dx;y-=dy;
       if(Math.hypot(dx,dy)<1e-9*sc){ok=true;break;}
     }
     if(!ok||x<V.xmin||x>V.xmax||y<V.ymin||y>V.ymax)continue;
+    const [ru,rv]=UV(x,y); if(!isFinite(ru+rv)||Math.hypot(ru,rv)>1e-4)continue;
     if(res.some(q=>Math.hypot(q.x-x,q.y-y)<1e-5*sc))continue;
-    const e=1e-6*sc,[u,v]=UV(x,y),[u1,v1]=UV(x+e,y),[u2,v2]=UV(x,y+e);
-    const J=[(u1-u)/e,(u2-u)/e,(v1-v)/e,(v2-v)/e],tr=J[0]+J[3],det=J[0]*J[3]-J[1]*J[2],disc=tr*tr-4*det;
+    const J=jac(x,y,1e-6*sc); if(!J.every(isFinite))continue;
+    const tr=J[0]+J[3],det=J[0]*J[3]-J[1]*J[2],disc=tr*tr-4*det;
     let type;
-    if(det<0)type='punto silla'; else if(Math.abs(det)<1e-9)type='degenerado';
+    if(Math.abs(det)<1e-9)type='degenerado'; else if(det<0)type='punto silla';
     else if(Math.abs(tr)<1e-6*Math.sqrt(det))type='vórtice / centro (linealizado)';
     else type=(disc>=0?'nodo ':'foco ')+(tr<0?'estable':'inestable');
     res.push({x,y,J,tr,det,disc,type});
   }
-  return res.slice(0,4);
+  EMore=Math.max(0,res.length-6);
+  return res.slice(0,6);
 }
 function traj(x0,y0,sg){
   const pts=[],mx=(V.xmax-V.xmin)*.1,my=(V.ymax-V.ymin)*.1,h=3*sg;
@@ -173,6 +249,7 @@ function traj(x0,y0,sg){
     x+=h/6*(k1[0]+2*k2[0]+2*k3[0]+k4[0]); y+=h/6*(k1[1]+2*k2[1]+2*k3[1]+k4[1]);
     if(x<V.xmin-mx||x>V.xmax+mx||y<V.ymin-my||y>V.ymax+my)break;
     const q=E.find(e=>Math.hypot((x-e.x)*kx,(y-e.y)*ky)<3); if(q){pts.push([q.x,q.y,0,0]);break;}
+    if(n>15&&Math.hypot((x-x0)*kx,(y-y0)*ky)<3.2){const [u0,v0]=UV(x0,y0);pts.push([x0,y0,u0,v0]);pts.closed=true;break;}
   }
   return pts;
 }
@@ -236,7 +313,7 @@ function arrow(x0,y0,x1,y1,col,wd){
   return `<line x1="${f1(x0)}" y1="${f1(y0)}" x2="${f1(x1-7*Math.cos(t))}" y2="${f1(y1-7*Math.sin(t))}" stroke="${col}" stroke-width="${wd}"/>`+head(x1,y1,x1-x0,y1-y0,col);
 }
 function drawTraj(x,y,col,wd,tang){
-  const b=traj(x,y,-1),f=traj(x,y,1),all=b.slice(1).reverse().concat(f);
+  const f=traj(x,y,1),all=f.closed?f:traj(x,y,-1).slice(1).reverse().concat(f);
   if(all.length<2)return '';
   let s=`<polyline points="${all.map(p=>f1(sx(p[0]))+','+f1(sy(p[1]))).join(' ')}" fill="none" stroke="${col}" stroke-width="${wd}" stroke-linejoin="round"/>`;
   const arr=f.length>10?f:all;
@@ -244,8 +321,8 @@ function drawTraj(x,y,col,wd,tang){
   if(i>=1)s+=head(sx(arr[i][0]),sy(arr[i][1]),sx(arr[i+1][0])-sx(arr[i][0]),sy(arr[i+1][1])-sy(arr[i][1]),col);
   if(tang)for(let k=1;k<all.length;k++){
     const p=all[k-1],q=all[k],d='stroke="var(--ink)" stroke-width="2" stroke-dasharray="6 4"';
-    if(p[2]*q[2]<0){const t=p[2]/(p[2]-q[2]),X=sx(p[0]+t*(q[0]-p[0])),Y=sy(p[1]+t*(q[1]-p[1]));s+=`<line x1="${f1(X)}" y1="${f1(Y-24)}" x2="${f1(X)}" y2="${f1(Y+24)}" ${d}/>`;}
-    if(p[3]*q[3]<0){const t=p[3]/(p[3]-q[3]),X=sx(p[0]+t*(q[0]-p[0])),Y=sy(p[1]+t*(q[1]-p[1]));s+=`<line x1="${f1(X-24)}" y1="${f1(Y)}" x2="${f1(X+24)}" y2="${f1(Y)}" ${d}/>`;}
+    if(p[2]*q[2]<0){const um=S.u((p[0]+q[0])/2,(p[1]+q[1])/2);if(isFinite(um)&&Math.abs(um)<Math.max(Math.abs(p[2]),Math.abs(q[2]))){const t=p[2]/(p[2]-q[2]),X=sx(p[0]+t*(q[0]-p[0])),Y=sy(p[1]+t*(q[1]-p[1]));s+=`<line x1="${f1(X)}" y1="${f1(Y-24)}" x2="${f1(X)}" y2="${f1(Y+24)}" ${d}/>`;}}
+    if(p[3]*q[3]<0){const vm=S.v((p[0]+q[0])/2,(p[1]+q[1])/2);if(isFinite(vm)&&Math.abs(vm)<Math.max(Math.abs(p[3]),Math.abs(q[3]))){const t=p[3]/(p[3]-q[3]),X=sx(p[0]+t*(q[0]-p[0])),Y=sy(p[1]+t*(q[1]-p[1]));s+=`<line x1="${f1(X-24)}" y1="${f1(Y)}" x2="${f1(X+24)}" y2="${f1(Y)}" ${d}/>`;}}
   }
   return s;
 }
@@ -255,9 +332,14 @@ function signs(f,segs,tx,ty,name,sw){
   const pool=inner.length?inner:segs;
   let m=null,bd=1e9;
   for(const s of pool){const X=sx((s[0]+s[2])/2),Y=sy((s[1]+s[3])/2),d=Math.hypot(X-tx,Y-ty);if(d<bd){bd=d;m=s;}}
-  const X=sx((m[0]+m[2])/2),Y=sy((m[1]+m[3])/2),a=sx(m[2])-sx(m[0]),b=sy(m[3])-sy(m[1]),n=Math.hypot(a,b)||1,nx=-b/n,ny=a/n;
+  const X=sx((m[0]+m[2])/2),Y=sy((m[1]+m[3])/2),a=sx(m[2])-sx(m[0]),b=sy(m[3])-sy(m[1]),n=Math.hypot(a,b)||1;
+  let nx=-b/n,ny=a/n;
+  const vp=f(ix(X+nx*17),iy(Y+ny*17));
+  if(isFinite(vp)&&vp<0){nx=-nx;ny=-ny;}
+  const lx=X+nx*40,ly=Y+ny*40,inBox=lx>=L+30&&lx<=W-R-30&&ly>=T+18&&ly<=H-B-18;
+  const tx0=inBox?lx:X-nx*40,ty0=inBox?ly:Y-ny*40;
   const sg=d=>{const v=f(ix(X+nx*d),iy(Y+ny*d));return isFinite(v)?(v>=0?'+':'−'):'';};
-  return (sw?`<g style="font-style:normal"><text x="${f1(X+nx*17-4)}" y="${f1(Y+ny*17+5)}" font-size="17">${sg(17)}</text><text x="${f1(X-nx*17-4)}" y="${f1(Y-ny*17+5)}" font-size="17">${sg(-17)}</text></g>`:'')+`<text x="${f1(X+nx*40)}" y="${f1(Y+ny*40+5)}" text-anchor="middle">${name}</text>`;
+  return (sw?`<g style="font-style:normal"><text x="${f1(X+nx*17-4)}" y="${f1(Y+ny*17+5)}" font-size="17">${sg(17)}</text><text x="${f1(X-nx*17-4)}" y="${f1(Y-ny*17+5)}" font-size="17">${sg(-17)}</text></g>`:'')+`<text x="${f1(tx0)}" y="${f1(ty0+5)}" text-anchor="middle">${name}</text>`;
 }
 function render(){
   kx=PW/(V.xmax-V.xmin); ky=PH/(V.ymax-V.ymin);
@@ -280,39 +362,42 @@ function render(){
   if($('#kAuto').checked)for(const s of autoSeeds())o+=drawTraj(s.x,s.y,'var(--blue)',s.w,tg);
   if($('#kABC').checked)for(const p of PT)o+=drawTraj(p.x,p.y,'var(--green)',2.2,tg);
   const nx=$('#kNx').checked,ny=$('#kNy').checked,pd=q=>`<path d="${path(q)}" stroke="var(--ink)" stroke-width="3.2" stroke-linecap="round" fill="none"/>`;
-  o+=(nx?pd(su):'')+(ny?pd(sv):'')+'</g>';
-  const sw=$('#kSig').checked;
-  if(nx)o+=signs(S.u,su,L+PW*.8,T+PH*.12,'x′ = 0',sw);
-  if(ny)o+=signs(S.v,sv,L+PW*.85,T+PH*.62,'y′ = 0',sw);
+  o+=(nx?pd(su):'')+(ny?pd(sv):'');
   if(nx&&ny)E.forEach((e,i)=>{o+=`<circle cx="${f1(sx(e.x))}" cy="${f1(sy(e.y))}" r="5" fill="var(--ink)"/><text x="${f1(sx(e.x)+9)}" y="${f1(sy(e.y)+20)}" font-size="17">E${E.length>1?'<tspan dy="4" font-size="72%">'+(i+1)+'</tspan>':''}</text>`;});
   if($('#kABC').checked)PT.forEach((p,i)=>{
     const X=sx(p.x),Y=sy(p.y);
     o+=`<circle cx="${f1(X)}" cy="${f1(Y)}" r="6" fill="var(--green)" stroke="var(--ink)" stroke-width="1.2"/><text x="${f1(X+9)}" y="${f1(Y-9)}" font-size="16" style="font-style:normal;font-weight:600">${p.n}</text><circle data-pt="${i}" cx="${f1(X)}" cy="${f1(Y)}" r="16" fill="transparent" style="cursor:pointer"/>`;
   });
+  o+='</g>';
+  const sw=$('#kSig').checked;
+  if(nx)o+=signs(S.u,su,L+PW*.8,T+PH*.12,'x′ = 0',sw);
+  if(ny)o+=signs(S.v,sv,L+PW*.85,T+PH*.62,'y′ = 0',sw);
   $('#plot').innerHTML=o+'</svg>';
   const rts=e=>e.disc>=0?`λ₁ = ${((e.tr+Math.sqrt(e.disc))/2).toFixed(2)} · λ₂ = ${((e.tr-Math.sqrt(e.disc))/2).toFixed(2)}`:`λ = ${(e.tr/2).toFixed(2)} ± ${(Math.sqrt(-e.disc)/2).toFixed(2)}i`;
-  $('#calc').innerHTML=E.length?E.map((e,i)=>`<div style="margin-bottom:8px"><b>E${E.length>1?'<sub>'+(i+1)+'</sub>':''} = (${e.x.toFixed(2)}, ${e.y.toFixed(2)}) — ${e.type}</b><br>traza = ${e.tr.toFixed(2)} · determinante = ${e.det.toFixed(2)}<br>${rts(e)}</div>`).join(''):'Sin equilibrios en esta ventana.';
+  $('#calc').innerHTML=(E.length?E.map((e,i)=>`<div style="margin-bottom:8px"><b>E${E.length>1?'<sub>'+(i+1)+'</sub>':''} = (${e.x.toFixed(2)}, ${e.y.toFixed(2)}) — ${e.type}</b><br>traza = ${e.tr.toFixed(2)} · determinante = ${e.det.toFixed(2)}<br>${rts(e)}</div>`).join(''):'Sin equilibrios en esta ventana.')+(EMore?`<div class="hint">… y ${EMore} equilibrio${EMore>1?'s':''} más en esta ventana.</div>`:'');
 }
 
 // ---------- interfaz ----------
+let raf=0;
+const sched=()=>{if(typeof requestAnimationFrame==='function'){if(!raf)raf=requestAnimationFrame(()=>{raf=0;render();});}else render();};
 function sliders(){
   $('#sliders').innerHTML=['a','b','c','d'].map((n,k)=>{
     const [mn,mx,st]=curRng?curRng[k]:[-5,5,.05];
     return `<div class="row"><label for="p_${n}"><span>${n}</span><output id="o_${n}">${(+P[n]).toFixed(2)}</output></label><input type="range" id="p_${n}" min="${mn}" max="${mx}" step="${st}" value="${P[n]}"></div>`;
   }).join('');
-  ['a','b','c','d'].forEach(n=>{const el=$('#p_'+n);if(el)el.addEventListener('input',()=>{P[n]=+el.value;$('#o_'+n).textContent=P[n].toFixed(2);clearType();render();});});
+  ['a','b','c','d'].forEach(n=>{const el=$('#p_'+n);if(el)el.addEventListener('input',()=>{P[n]=+el.value;$('#o_'+n).textContent=P[n].toFixed(2);clearType();sched();});});
 }
 const clearType=()=>document.querySelectorAll('input[name=tp]').forEach(r=>r.checked=false);
 function setType(i){
   const p=PRE[i]; $('#fu').value=p.u; $('#fv').value=p.v;
   ['a','b','c','d'].forEach((n,k)=>P[n]=p.par[k]);
-  curRng=p.rng||null; V={...V0}; sliders(); compile(); render();
+  curRng=p.rng||null; V={...V0}; PT=PT0.map(q=>({...q})); sliders(); compile(); render();
 }
 const opt=(t,i)=>`<label class="opt"><input type="radio" name="tp" value="${i}"> ${t.n}</label>`+(t.ref?`<p class="hint" style="margin:0 0 4px 22px">${t.ref}</p>`:'');
 $('#types').innerHTML=PRE.map((t,i)=>t.model?'':opt(t,i)).join('');
 $('#models').innerHTML=PRE.map((t,i)=>t.model?opt(t,i):'').join('');
 ['#types','#models'].forEach(s=>$(s).addEventListener('change',e=>setType(+e.target.value)));
-['fu','fv'].forEach(id=>$('#'+id).addEventListener('input',()=>{clearType();curRng=null;sliders();compile();render();}));
+['fu','fv'].forEach(id=>$('#'+id).addEventListener('input',()=>{clearType();curRng=null;sliders();compile();sched();}));
 ['kAxes','kNx','kNy','kSig','kArr','kAuto','kTan','kABC'].forEach(id=>$('#'+id).addEventListener('change',render));
 
 // zoom (rueda), mover (arrastrar el fondo), arrastrar A, B, C, restablecer (doble clic)
@@ -324,7 +409,7 @@ pl.addEventListener('wheel',e=>{
   const k=e.deltaY<0?.85:1/.85,fx=(p.X-L)/PW,fy=1-(p.Y-T)/PH,w=V.xmax-V.xmin,h=V.ymax-V.ymin;
   const w0=V0.xmax-V0.xmin,h0=V0.ymax-V0.ymin,nw=Math.min(Math.max(w*k,w0/50),w0*8),nh=Math.min(Math.max(h*k,h0/50),h0*8);
   const cx=V.xmin+fx*w,cy=V.ymin+fy*h;
-  V={xmin:cx-fx*nw,xmax:cx-fx*nw+nw,ymin:cy-fy*nh,ymax:cy-fy*nh+nh}; render();
+  V={xmin:cx-fx*nw,xmax:cx-fx*nw+nw,ymin:cy-fy*nh,ymax:cy-fy*nh+nh}; sched();
 },{passive:false});
 pl.addEventListener('pointerdown',e=>{
   if(e.button!==0||!pl.querySelector('svg'))return; const p=pos(e),t=e.target.closest('[data-pt]');
@@ -336,11 +421,11 @@ pl.addEventListener('pointermove',e=>{
   if(drag.pt!==undefined){PT[drag.pt].x=Math.min(Math.max(ix(p.X),V.xmin),V.xmax);PT[drag.pt].y=Math.min(Math.max(iy(p.Y),V.ymin),V.ymax);}
   else{const v=drag.v,dx=(e.clientX-drag.x)/(PW*p.r.width/W)*(v.xmax-v.xmin),dy=(e.clientY-drag.y)/(PH*p.r.height/H)*(v.ymax-v.ymin);
     V={xmin:v.xmin-dx,xmax:v.xmax-dx,ymin:v.ymin+dy,ymax:v.ymax+dy};}
-  render();
+  sched();
 });
 const end=()=>{drag=null;pl.style.cursor='';};
 pl.addEventListener('pointerup',end); pl.addEventListener('pointercancel',end);
-pl.addEventListener('dblclick',()=>{V={...V0};render();});
+pl.addEventListener('dblclick',()=>{V={...V0};PT=PT0.map(q=>({...q}));render();});
 document.querySelector('input[name=tp][value="0"]').checked=true;
 setType(0);
 </script>
